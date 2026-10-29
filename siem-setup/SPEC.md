@@ -6,11 +6,11 @@ Oct 29, 2026
 
 ## Goal and hard rules
 
-Build a local, $0 SIEM pipeline in one day: real SSH and web logs from a Docker attack lab flow through Kafka, get normalized to one schema, tagged with AlienVault OTX intel, checked by two ATT&CK detections (T1110 Brute Force, T1078 Valid Accounts), stored briefly in Postgres, and served by a small FastAPI.
+Build a local, $0 SIEM pipeline: real SSH and web logs from a Docker attack lab flow through Kafka, get normalized to one schema, tagged with AlienVault OTX intel, checked by two ATT&CK detections (T1110 Brute Force, T1078 Valid Accounts), stored briefly in Postgres, and served by a small FastAPI.
 
 Rules for every agent working on this repo:
 
-1. **Everything runs locally in Docker Compose.** No cloud services, no paid APIs, no honeypots.
+1. **Everything runs locally in Docker Compose.** No cloud services, no paid APIs.
 2. **Rules read time from the event, never the clock.** Use `@timestamp`, never `time.time()` or `datetime.now()` inside detection logic.
 3. **Every Kafka message between services is JSON keyed by `source.ip`** (raw topics may use the IP when the producer can parse it, else no key).
 4. **One schema.** All normalized events validate against the Pydantic `Event` model in "Event and alert schema". Rules only read normalized fields.

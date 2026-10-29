@@ -1,5 +1,9 @@
 # SIEM Log Aggregator — docker-compose
 #
+# Pin the Compose project name so image and default container names are `siem-*`
+# (otherwise they take the folder name, siem-claude-setup).
+name: siem
+#
 # Block 1 (Lab + scripts) defines only the attack-lab services below.
 # Later build-order blocks append kafka, postgres, producers, normalizer,
 # intel-updater, detector, storage-writer and api to this same file.
@@ -9,11 +13,13 @@
 
 networks:
   lab:
-    internal: true
+    internal: true          # no internet route; only the attack lab lives here
+  siem:                     # pipeline backbone (kafka, postgres, python services)
 
 volumes:
   ssh_logs:   # target-ssh writes sshd logs here; producer-ssh tails them later
   web_logs:   # target-web (nginx) writes its access log here; producer-web tails it
+  pgdata:     # postgres data (wiped by `make reset` = down -v)
 
 services:
   # --- SSH target -----------------------------------------------------------
@@ -123,4 +129,155 @@ services:
       ATTACK_INTERVAL_MIN: ${ATTACK_INTERVAL_MIN}
     networks:
       - lab
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Block 2 — Pipeline core: Kafka, Postgres, producers, normalizer, storage
+  # ==========================================================================
+
+  # --- Kafka broker (KRaft, single node) ------------------------------------
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: siem-kafka
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      # No accidental 1-partition topics; only kafka-init creates topics.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Retention (SPEC "Storage and retention"): 2 h / 100 MB, 16 MB segments.
+      KAFKA_LOG_RETENTION_HOURS: ${KAFKA_LOG_RETENTION_HOURS}
+      KAFKA_LOG_RETENTION_BYTES: ${KAFKA_LOG_RETENTION_BYTES}
+      KAFKA_LOG_SEGMENT_BYTES: ${KAFKA_LOG_SEGMENT_BYTES}
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+    networks:
+      - siem
+    restart: unless-stopped
+
+  # --- One-shot topic creation ----------------------------------------------
+  kafka-init:
+    image: apache/kafka:3.9.0
+    container_name: siem-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        for t in syslog-raw web-logs-raw normalized-security-events security-alerts; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+            --create --if-not-exists --topic "$$t" \
+            --partitions 3 --replication-factor 1
+        done
+        echo "topics ready:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
+    networks:
+      - siem
+    restart: "no"
+
+  # --- Postgres -------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: siem-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - siem
+    restart: unless-stopped
+
+  # --- Producers: tail lab log files into the raw topics --------------------
+  producer-ssh:
+    build:
+      context: .
+      dockerfile: producers/Dockerfile
+    container_name: siem-producer-ssh
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    command: ["--source", "ssh", "--file", "/logs/ssh/current", "--topic", "syslog-raw"]
+    volumes:
+      - ssh_logs:/logs/ssh:ro
+    networks:
+      - siem
+    restart: unless-stopped
+
+  producer-web:
+    build:
+      context: .
+      dockerfile: producers/Dockerfile
+    container_name: siem-producer-web
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    command: ["--source", "web", "--file", "/logs/web/access.log", "--topic", "web-logs-raw"]
+    volumes:
+      - web_logs:/logs/web:ro
+    networks:
+      - siem
+    restart: unless-stopped
+
+  # --- Normalizer (2 replicas share the raw partitions) ---------------------
+  normalizer:
+    build:
+      context: .
+      dockerfile: normalizer/Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 2
+    networks:
+      - siem
+    restart: unless-stopped
+
+  # --- Storage writer: normalized events + alerts -> Postgres ---------------
+  storage-writer:
+    build:
+      context: .
+      dockerfile: storage/Dockerfile
+    container_name: siem-storage-writer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    networks:
+      - siem
     restart: unless-stopped

@@ -12,8 +12,8 @@ down:            ## stop, keep data
 reset:           ## wipe all data (Kafka, Postgres, log volumes)
 	docker compose down -v
 
-test:            ## unit tests, no Docker (block 3)
-	@echo "no unit tests yet (added in block 3: Detection)"
+test:            ## unit tests, no Docker
+	python -m pytest
 
 pipeline:        ## injector scenarios -> alerts in Postgres (block 3)
 	@echo "pipeline tests not implemented yet (block 3)"
