@@ -1,0 +1,126 @@
+# SIEM Log Aggregator — docker-compose
+#
+# Block 1 (Lab + scripts) defines only the attack-lab services below.
+# Later build-order blocks append kafka, postgres, producers, normalizer,
+# intel-updater, detector, storage-writer and api to this same file.
+#
+# The lab network is `internal: true` (SPEC hard rule 7 / 8): no route to the
+# internet, so attack tools can only ever reach other lab containers.
+
+networks:
+  lab:
+    internal: true
+
+volumes:
+  ssh_logs:   # target-ssh writes sshd logs here; producer-ssh tails them later
+  web_logs:   # target-web (nginx) writes its access log here; producer-web tails it
+
+services:
+  # --- SSH target -----------------------------------------------------------
+  # `admin` has the weak password and is the brute-force target. Normal users
+  # (strong passwords) are created by the init script for traffic-gen to use.
+  target-ssh:
+    image: linuxserver/openssh-server:latest
+    container_name: siem-target-ssh
+    hostname: target-ssh
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+      PASSWORD_ACCESS: "true"
+      USER_NAME: ${SSH_ADMIN_USER}
+      USER_PASSWORD: ${SSH_ADMIN_PASS}
+      # Extra accounts for traffic-gen, consumed by the init script below.
+      NORMAL_USERS: ${SSH_NORMAL_USERS}
+      NORMAL_PASSWORD: ${SSH_NORMAL_PASS}
+      # Log to a file (not stdout) so producer-ssh can tail it from the volume.
+      LOG_STDOUT: "false"
+    volumes:
+      - ssh_logs:/config/logs/openssh
+      - ./lab/target-ssh/init-users.sh:/custom-cont-init.d/10-normal-users.sh:ro
+    networks:
+      - lab
+    restart: unless-stopped
+
+  # --- Vulnerable web app and its database ----------------------------------
+  dvwa-db:
+    image: mariadb:10.11
+    container_name: siem-dvwa-db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DVWA_DB_ROOT_PASS}
+      MYSQL_DATABASE: dvwa
+      MYSQL_USER: dvwa
+      MYSQL_PASSWORD: ${DVWA_DB_PASS}
+    networks:
+      - lab
+    restart: unless-stopped
+
+  dvwa:
+    image: ghcr.io/digininja/dvwa:latest
+    container_name: siem-dvwa
+    depends_on:
+      - dvwa-db
+    environment:
+      DB_SERVER: dvwa-db
+      DB_DATABASE: dvwa
+      DB_USERNAME: dvwa
+      DB_PASSWORD: ${DVWA_DB_PASS}
+    networks:
+      - lab
+    restart: unless-stopped
+
+  # --- Reverse proxy in front of DVWA; writes the combined access log -------
+  target-web:
+    image: nginx:alpine
+    container_name: siem-target-web
+    depends_on:
+      - dvwa
+    # The nginx:alpine image ships access.log as a symlink to /dev/stdout.
+    # Remove it so nginx writes a REAL file on the shared volume that
+    # producer-web can tail (block 2). error.log can stay on stderr.
+    command:
+      - sh
+      - -c
+      - "rm -f /var/log/nginx/access.log && exec nginx -g 'daemon off;'"
+    volumes:
+      - ./lab/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - web_logs:/var/log/nginx
+    networks:
+      - lab
+    restart: unless-stopped
+
+  # --- Normal background traffic (SSH logins + page views) ------------------
+  traffic-gen:
+    build: ./lab/traffic-gen
+    container_name: siem-traffic-gen
+    depends_on:
+      - target-ssh
+      - target-web
+    environment:
+      SSH_HOST: target-ssh
+      SSH_PORT: "2222"
+      WEB_URL: http://target-web
+      SSH_NORMAL_USERS: ${SSH_NORMAL_USERS}
+      SSH_NORMAL_PASS: ${SSH_NORMAL_PASS}
+    networks:
+      - lab
+    restart: unless-stopped
+
+  # --- On-demand attacker ---------------------------------------------------
+  # Runs one scenario per `docker compose exec attacker attack <scenario>`.
+  # ATTACK_INTERVAL_MIN > 0 also loops A1-A3 on a timer (default 0 = off).
+  attacker:
+    build: ./lab/attacker
+    container_name: siem-attacker
+    depends_on:
+      - target-ssh
+      - target-web
+    environment:
+      SSH_HOST: target-ssh
+      SSH_PORT: "2222"
+      SSH_ADMIN_USER: ${SSH_ADMIN_USER}
+      SSH_ADMIN_PASS: ${SSH_ADMIN_PASS}
+      ATTACK_INTERVAL_MIN: ${ATTACK_INTERVAL_MIN}
+    networks:
+      - lab
+    restart: unless-stopped
