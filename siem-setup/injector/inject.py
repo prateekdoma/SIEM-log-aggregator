@@ -72,7 +72,10 @@ def main() -> int:
     for i, (offset, outcome, user) in enumerate(steps):
         ts = base + timedelta(seconds=offset)
         line = _line(ts, outcome, user, args.ip, 40000 + i)
-        producer.produce(config.TOPIC_SYSLOG_RAW, value=line.encode("utf-8"))
+        # Key the raw lines by source IP (SPEC allows it when the producer knows
+        # the IP) so a burst stays on one partition and reaches the detector in
+        # order — otherwise a trailing success can overtake its failures.
+        producer.produce(config.TOPIC_SYSLOG_RAW, key=args.ip, value=line.encode("utf-8"))
         producer.poll(0)
     producer.flush()
 
