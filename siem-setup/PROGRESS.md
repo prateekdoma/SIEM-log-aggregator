@@ -1,8 +1,18 @@
 # PROGRESS
 
 ## Current block
-5. API — DONE (make e2e 5/5 passed with the real attacker on Docker 2026-10-30).
-   CORE BUILD (blocks 1-5) COMPLETE. Only block 6 (README) remains.
+6. README — DONE (2026-10-30). ALL BUILD-ORDER BLOCKS (1-6) COMPLETE.
+   Plus: live dashboard (api/dashboard.html) added post-core; injector raw lines
+   keyed by source IP (ordering fix).
+
+## Block 6 — README (done 2026-10-30)
+- README.md: architecture diagram, quick start, make targets, attack scenarios
+  (real + injector), detections table, API endpoints, OTX intel (+ key/ephemeral),
+  the real `kafka-consumer-groups --describe --group detectors` output showing 2
+  detectors sharing the 3 partitions (172.19.0.9 owns 0&1, 172.19.0.10 owns 2),
+  C2 blind-spot explanation, retention, repo layout, out-of-scope.
+- Screenshot: left as a placeholder (docs/dashboard.png) for the user to capture
+  from the live dashboard — can't screenshot from here.
 
 ## Block 5 — API (code complete 2026-10-30)
 - api/main.py: FastAPI on 8000. GET /alerts (?since=&limit=50), GET /events
@@ -70,6 +80,15 @@
       C1/C2 -> no alert)
 
 ## Spec changes (agreed during build — MIRROR THESE INTO THE claude.ai DOC)
+- 2026-10-30 (post-core, user request): alert severity is now ADJUSTED, not fixed.
+  A successful-access alert (T1078) is floored at 80, and any alert from an OTX
+  known_bad source IP gets +20 (capped 100). So T1110 base 50 -> 70 if known_bad;
+  T1078 base 80 -> 100 if known_bad. Config: SUCCESS_ACCESS_MIN_SEVERITY=80,
+  KNOWN_BAD_ALERT_BONUS=20. Implemented in detector/rules/base.py (adjust_severity),
+  valid_after passes success_access=True. SPEC.md updated (Alert table + Detection
+  engine bullet). Unit tests added (test_severity.py). Also: /stats now returns
+  alerts.by_severity and the dashboard severity tiles show ALERT severities (so
+  high/critical populate; events top out at 40 and can't).
 - 2026-10-29 (block 3 design): T1110.001 Password Guessing redefined from
   "≥10 SSH failures from one IP within 60 s" (IP-level) to "≥10 failures against
   the same (source.ip, user.name) within 60 s" (per-user). T1110.003 spray stays

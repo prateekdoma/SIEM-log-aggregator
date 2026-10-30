@@ -24,9 +24,10 @@ def ssh_event(
     ip: str = "198.51.100.7",
     user: str | None = "admin",
     outcome: str = "failure",
+    otx: str = "unknown",
 ) -> Event:
     severity = 20 if outcome == "failure" else 0
-    return Event(
+    ev = Event(
         timestamp=ts,
         event=EventFields(
             id=uuid.uuid4(),
@@ -40,6 +41,8 @@ def ssh_event(
         observer=Observer(type="ssh"),
         user=User(name=user),
     )
+    ev.threat.indicator.status = otx
+    return ev
 
 
 def run(events, rules=RULES):

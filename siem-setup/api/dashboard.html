@@ -73,8 +73,8 @@
   <div class="status"><span id="dot" class="dot"></span><span id="status">connecting…</span></div>
 </header>
 <main>
-  <div class="section-title">Events — last hour (by severity)</div>
-  <div class="tiles" id="event-tiles"></div>
+  <div class="section-title">Alerts — last hour (by severity)</div>
+  <div class="tiles" id="sev-tiles"></div>
 
   <div class="section-title">Alerts — last hour (by technique)</div>
   <div class="chips" id="alert-chips"><span class="chip">—</span></div>
@@ -135,20 +135,20 @@ async function loadHistory() {
 async function loadStats() {
   try {
     const s = await (await fetch("/stats")).json();
-    const ev = s.events, bands = ev.by_severity;
+    const al = s.alerts, bands = al.by_severity;   // tiles show ALERT severities (where high/critical live)
     const tiles = [
-      ["total", ev.total, ""], ["low", bands.low, "low"], ["medium", bands.medium, "medium"],
+      ["total", al.total, ""], ["low", bands.low, "low"], ["medium", bands.medium, "medium"],
       ["high", bands.high, "high"], ["critical", bands.critical, "critical"],
     ];
-    document.getElementById("event-tiles").innerHTML = tiles.map(([label, val, cls]) =>
+    document.getElementById("sev-tiles").innerHTML = tiles.map(([label, val, cls]) =>
       `<div class="tile ${cls}"><div class="label">${label}</div><div class="value">${val}</div></div>`).join("");
 
-    const techs = s.alerts.by_technique;
+    const techs = al.by_technique;
     const chips = Object.keys(techs).length
       ? Object.entries(techs).map(([t, c]) => `<span class="chip">${esc(t)} <b>${c}</b></span>`).join("")
       : `<span class="chip">no alerts in the last hour</span>`;
     document.getElementById("alert-chips").innerHTML =
-      `<span class="chip">total <b>${s.alerts.total}</b></span>` + chips;
+      `<span class="chip">events ingested <b>${s.events.total}</b></span>` + chips;
   } catch (e) { /* ignore transient errors */ }
 }
 

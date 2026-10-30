@@ -48,5 +48,6 @@ class SshValidAfterBruteForce:
                 usernames=[user],
                 otx_status=ev.threat.indicator.status,
                 reason=f"successful SSH login for '{user}' after recent brute force",
+                success_access=True,   # a successful login -> floor at 80
             )
         ]

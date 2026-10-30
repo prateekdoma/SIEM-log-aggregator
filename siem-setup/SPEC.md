@@ -155,7 +155,7 @@ SSH lines to parse (others are ignored, not errors):
 | `@timestamp` | datetime | time of the triggering event |
 | `rule.id` | str | e.g. ssh-bruteforce, ssh-valid-after-bruteforce |
 | `threat.technique.id` | str | T1110.001, T1110.003, T1078 |
-| `severity` | int 0–100 | 50 for T1110, 80 for T1078 |
+| `severity` | int 0–100 | base 50 for T1110, 80 for T1078; then adjusted (see Detection engine: known_bad +20, success-access floored at 80) |
 | `source.ip` | str | |
 | `first_seen`, `last_seen` | datetime | span of the evidence events |
 | `event_count` | int | events in the window |
@@ -220,6 +220,7 @@ for msg in consumer:                      # group "detectors", topic normalized-
 - Cooldown: one alert per `(rule, technique, source.ip)` per 5 min, so T1110.001 and T1110.003 have independent cooldowns and an IP doing both raises one of each. A 50-guess hydra run against one user produces one T1110.001 alert.
 - T1110.001 counts failures per `(source.ip, user.name)`: ≥ 10 failures against the **same** username within 60 s. A spray of distinct usernames does not trip it; T1110.003 handles that.
 - BruteForce sets `bruteforce_seen` whenever it fires; ValidAccounts only reads that flag.
+- **Alert severity adjustments:** a successful-access alert (T1078) is floored at 80, and any alert whose source IP is OTX `known_bad` gets +20 (capped at 100). So T1110 from a known_bad IP = 70, and T1078 from a known_bad IP = 100. (`SUCCESS_ACCESS_MIN_SEVERITY=80`, `KNOWN_BAD_ALERT_BONUS=20`.)
 - All thresholds come from env vars (`BF_FAIL_COUNT=10`, `BF_WINDOW_S=60`, `SPRAY_USERS=5`, `SPRAY_WINDOW_S=300`, `VALID_LOOKBACK_S=600`, `COOLDOWN_S=300`).
 
 ## OTX enrichment

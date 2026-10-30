@@ -195,9 +195,10 @@ def stats():
             f"SELECT count(*) AS total, {band_cols} FROM events "
             "WHERE ts >= now() - interval '1 hour'"
         ).fetchone()
-        alerts_total = conn.execute(
-            "SELECT count(*) AS total FROM alerts WHERE ts >= now() - interval '1 hour'"
-        ).fetchone()["total"]
+        alerts = conn.execute(
+            f"SELECT count(*) AS total, {band_cols} FROM alerts "
+            "WHERE ts >= now() - interval '1 hour'"
+        ).fetchone()
         by_technique = conn.execute(
             "SELECT technique, count(*) AS count FROM alerts "
             "WHERE ts >= now() - interval '1 hour' GROUP BY technique ORDER BY count DESC"
@@ -209,7 +210,8 @@ def stats():
             "by_severity": {name: events[name] for name in SEVERITY_BANDS},
         },
         "alerts": {
-            "total": alerts_total,
+            "total": alerts["total"],
+            "by_severity": {name: alerts[name] for name in SEVERITY_BANDS},
             "by_technique": {row["technique"]: row["count"] for row in by_technique},
         },
     }

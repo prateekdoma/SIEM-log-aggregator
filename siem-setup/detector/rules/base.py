@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Protocol
 
+from common import config
 from common.schema import (
     Alert,
     AlertRef,
@@ -30,6 +31,17 @@ class Rule(Protocol):
     def evaluate(self, ev, st: IpState) -> list[Alert]: ...   # 0..n alerts
 
 
+def adjust_severity(base: int, otx_status: str, success_access: bool) -> int:
+    """Floor successful-access alerts at SUCCESS_ACCESS_MIN_SEVERITY, then add the
+    known_bad bonus (capped at 100)."""
+    severity = base
+    if success_access:
+        severity = max(severity, config.SUCCESS_ACCESS_MIN_SEVERITY)
+    if otx_status == "known_bad":
+        severity = min(100, severity + config.KNOWN_BAD_ALERT_BONUS)
+    return severity
+
+
 def build_alert(
     *,
     rule_id: str,
@@ -43,13 +55,14 @@ def build_alert(
     usernames: list[str | None],
     otx_status: str,
     reason: str,
+    success_access: bool = False,
 ) -> Alert:
     return Alert(
         timestamp=timestamp,
         alert=AlertRef(id=uuid.uuid4()),
         rule=RuleRef(id=rule_id),
         threat=ThreatTechnique(technique=TechniqueRef(id=technique)),
-        severity=severity,
+        severity=adjust_severity(severity, otx_status, success_access),
         source=Source(ip=source_ip),
         first_seen=first_seen,
         last_seen=last_seen,

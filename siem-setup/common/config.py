@@ -67,3 +67,7 @@ VALID_LOOKBACK_S = int(os.getenv("VALID_LOOKBACK_S", "600"))
 COOLDOWN_S = int(os.getenv("COOLDOWN_S", "300"))
 # Evict an IP's in-memory state after this many seconds idle (by event time).
 EVICT_IDLE_S = int(os.getenv("EVICT_IDLE_S", "1800"))
+# Alert severity adjustments: add this when the source IP is OTX known_bad
+# (capped at 100), and floor any successful-access alert at this severity.
+KNOWN_BAD_ALERT_BONUS = int(os.getenv("KNOWN_BAD_ALERT_BONUS", "20"))
+SUCCESS_ACCESS_MIN_SEVERITY = int(os.getenv("SUCCESS_ACCESS_MIN_SEVERITY", "80"))
