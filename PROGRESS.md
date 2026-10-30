@@ -79,7 +79,7 @@
 - [x] `make pipeline` passes (A1->T1110.001; A2->T1110.001+T1078; A3->T1110.003;
       C1/C2 -> no alert)
 
-## Spec changes (agreed during build — MIRROR THESE INTO THE claude.ai DOC)
+## Spec changes (agreed during build)
 - 2026-10-30 (post-core, user request): alert severity is now ADJUSTED, not fixed.
   A successful-access alert (T1078) is floored at 80, and any alert from an OTX
   known_bad source IP gets +20 (capped 100). So T1110 base 50 -> 70 if known_bad;
@@ -97,7 +97,7 @@
   separates guessing from spraying; A1/A2 (same user `admin`) still fire
   T1110.001, A3 (distinct users) fires T1110.003 only — documented expected
   results unchanged. SPEC.md updated (Detection engine table + cooldown bullet +
-  Testing cases). User to copy this into the source-of-truth claude.ai doc.
+  Testing cases). 
   Also tidied two illustrative samples in SPEC.md to match: Rule Protocol no
   longer lists a single `technique: str` (a rule may emit multiple techniques);
   IpState description now says a (timestamp, user.name) failure window + per-
