@@ -17,11 +17,12 @@ import asyncio
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 
 from confluent_kafka import KafkaError
 from confluent_kafka.admin import AdminClient
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -105,6 +106,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SIEM Log Aggregator API", lifespan=lifespan)
+
+DASHBOARD = Path(__file__).with_name("dashboard.html")
+
+
+@app.get("/", include_in_schema=False)
+def dashboard():
+    """Single-page live dashboard (feed + stats), served from the API itself."""
+    return FileResponse(DASHBOARD)
 
 
 def _rows(sql: str, params: list) -> list[dict]:

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEM — Live Alerts</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel2: #1b222c; --border: #2a313c;
+    --text: #e6edf3; --muted: #8b949e;
+    --low: #4493f8; --medium: #d29922; --high: #f0883e; --critical: #f85149;
+    --ok: #3fb950; --off: #6e7681;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+    border-bottom: 1px solid var(--border); background: var(--panel);
+    position: sticky; top: 0; z-index: 2;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 10px; }
+  .tile {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .tile .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .tile.low .value { color: var(--low); }
+  .tile.medium .value { color: var(--medium); }
+  .tile.high .value { color: var(--high); }
+  .tile.critical .value { color: var(--critical); }
+
+  .section-title { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin: 18px 0 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; font-size: 13px; }
+  .chip b { color: var(--high); }
+
+  #feed { display: flex; flex-direction: column; gap: 8px; }
+  .alert {
+    display: grid; grid-template-columns: 6px 84px 1fr auto; gap: 12px; align-items: center;
+    background: var(--panel); border: 1px solid var(--border); border-left: none;
+    border-radius: 8px; padding: 10px 14px 10px 0; overflow: hidden;
+  }
+  .alert .bar { width: 6px; align-self: stretch; }
+  .alert.low .bar { background: var(--low); } .alert.low .sev { color: var(--low); }
+  .alert.medium .bar { background: var(--medium); } .alert.medium .sev { color: var(--medium); }
+  .alert.high .bar { background: var(--high); } .alert.high .sev { color: var(--high); }
+  .alert.critical .bar { background: var(--critical); } .alert.critical .sev { color: var(--critical); }
+  .alert .tech { font-weight: 700; }
+  .alert .sev { font-size: 12px; font-weight: 600; }
+  .alert .mid .reason { color: var(--text); }
+  .alert .mid .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .alert .ip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .alert .right { text-align: right; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .alert .right .badbad { color: var(--critical); font-weight: 600; }
+  .flash { animation: flash 1s ease-out; }
+  @keyframes flash { from { background: #26303d; } to { background: var(--panel); } }
+  .empty { color: var(--muted); padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡 SIEM — Live Alerts</h1>
+  <div class="status"><span id="dot" class="dot"></span><span id="status">connecting…</span></div>
+</header>
+<main>
+  <div class="section-title">Events — last hour (by severity)</div>
+  <div class="tiles" id="event-tiles"></div>
+
+  <div class="section-title">Alerts — last hour (by technique)</div>
+  <div class="chips" id="alert-chips"><span class="chip">—</span></div>
+
+  <div class="section-title">Alert feed</div>
+  <div id="feed"><div class="empty">Waiting for alerts… run <code>docker compose exec attacker attack bruteforce-fail</code></div></div>
+</main>
+
+<script>
+const sevClass = (s) => s >= 80 ? "critical" : s >= 50 ? "high" : s >= 30 ? "medium" : "low";
+const esc = (v) => String(v ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtTime = (ts) => { try { return new Date(ts).toLocaleTimeString(); } catch { return ts; } };
+
+// /alerts (flat, from Postgres) and /live (nested, raw Kafka) have different shapes.
+function normalize(a) {
+  if ("rule_id" in a) {
+    return { rule: a.rule_id, tech: a.technique, sev: a.severity, ip: a.source_ip,
+             ts: a.ts, count: a.event_count, reason: a.details?.reason, otx: a.details?.otx_status };
+  }
+  return { rule: a.rule?.id, tech: a.threat?.technique?.id, sev: a.severity, ip: a.source?.ip,
+           ts: a["@timestamp"], count: a.event_count, reason: a.details?.reason, otx: a.details?.otx_status };
+}
+
+function alertNode(a, flash) {
+  const n = normalize(a);
+  const cls = sevClass(n.sev);
+  const el = document.createElement("div");
+  el.className = `alert ${cls}` + (flash ? " flash" : "");
+  const otx = n.otx === "known_bad" ? `<span class="badbad">known_bad</span>` : esc(n.otx || "unknown");
+  el.innerHTML = `
+    <div class="bar"></div>
+    <div><div class="tech">${esc(n.tech)}</div><div class="sev">sev ${esc(n.sev)}</div></div>
+    <div class="mid">
+      <div class="reason">${esc(n.reason || n.rule)}</div>
+      <div class="meta">${esc(n.rule)} · src <span class="ip">${esc(n.ip)}</span> · ${esc(n.count)} events · OTX ${otx}</div>
+    </div>
+    <div class="right">${esc(fmtTime(n.ts))}</div>`;
+  return el;
+}
+
+const feed = document.getElementById("feed");
+let feedCount = 0;
+function addAlert(a, flash) {
+  if (feedCount === 0) feed.innerHTML = "";
+  feed.insertBefore(alertNode(a, flash), feed.firstChild);
+  feedCount++;
+  while (feed.childElementCount > 200) feed.removeChild(feed.lastChild);
+}
+
+async function loadHistory() {
+  try {
+    const r = await fetch("/alerts?limit=50");
+    const rows = await r.json();
+    rows.reverse().forEach(a => addAlert(a, false));  // oldest first so newest ends on top
+  } catch (e) { /* API may still be warming up */ }
+}
+
+async function loadStats() {
+  try {
+    const s = await (await fetch("/stats")).json();
+    const ev = s.events, bands = ev.by_severity;
+    const tiles = [
+      ["total", ev.total, ""], ["low", bands.low, "low"], ["medium", bands.medium, "medium"],
+      ["high", bands.high, "high"], ["critical", bands.critical, "critical"],
+    ];
+    document.getElementById("event-tiles").innerHTML = tiles.map(([label, val, cls]) =>
+      `<div class="tile ${cls}"><div class="label">${label}</div><div class="value">${val}</div></div>`).join("");
+
+    const techs = s.alerts.by_technique;
+    const chips = Object.keys(techs).length
+      ? Object.entries(techs).map(([t, c]) => `<span class="chip">${esc(t)} <b>${c}</b></span>`).join("")
+      : `<span class="chip">no alerts in the last hour</span>`;
+    document.getElementById("alert-chips").innerHTML =
+      `<span class="chip">total <b>${s.alerts.total}</b></span>` + chips;
+  } catch (e) { /* ignore transient errors */ }
+}
+
+function setStatus(on, text) {
+  document.getElementById("dot").className = "dot" + (on ? " on" : "");
+  document.getElementById("status").textContent = text;
+}
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/live`);
+  ws.onopen = () => setStatus(true, "live");
+  ws.onmessage = (e) => { try { addAlert(JSON.parse(e.data), true); loadStats(); } catch {} };
+  ws.onclose = () => { setStatus(false, "reconnecting…"); setTimeout(connect, 2000); };
+  ws.onerror = () => ws.close();
+}
+
+loadHistory().then(loadStats).then(connect);
+setInterval(loadStats, 5000);
+</script>
+</body>
+</html>
