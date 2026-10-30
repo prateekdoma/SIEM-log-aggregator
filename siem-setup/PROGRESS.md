@@ -1,8 +1,25 @@
 # PROGRESS
 
 ## Current block
-4. OTX enrichment — DONE (done-check passed on Docker 2026-10-30). Blocks 1-3 DONE.
-   Next: block 5 (API). Unit tests 25/25.
+5. API — DONE (make e2e 5/5 passed with the real attacker on Docker 2026-10-30).
+   CORE BUILD (blocks 1-5) COMPLETE. Only block 6 (README) remains.
+
+## Block 5 — API (code complete 2026-10-30)
+- api/main.py: FastAPI on 8000. GET /alerts (?since=&limit=50), GET /events
+  (?ip=&since=&limit=100), GET /stats (last-hour events by severity band
+  low/med/high/critical + alerts by technique), GET /health (200 when Postgres
+  + Kafka reachable), WS /live (one background Kafka consumer group `api`,
+  auto.offset.reset=latest, fans out to all WS clients). psycopg_pool for DB.
+- api/Dockerfile + requirements (fastapi/uvicorn/psycopg[binary]/psycopg-pool/
+  confluent-kafka); api service in compose (port 8000, depends_on kafka+pg healthy).
+- tests/e2e/run_e2e.sh + Makefile `e2e`: waits on /health, then per scenario
+  resets (truncate alerts + restart detector to clear cooldowns) and runs the
+  REAL attacker A1-A3/C1-C2, checking GET /alerts for expected techniques.
+
+## Block 5 done-check — PASSED on Docker 2026-10-30
+- [x] `make e2e`: 5/5 (A1->T1110.001; A2->T1110.001+T1078; A3->T1110.003;
+      C1/C2 -> no alert), via the REAL attacker + GET /alerts. API smoke-tested:
+      /health 200 (pg+kafka), /stats, /alerts, /events all serialize correctly.
 
 ## Block 4 — OTX enrichment (done 2026-10-30)
 - normalizer/enrich.py: OtxTagger loads /data/intel/otx_ipv4.json, tags known_bad

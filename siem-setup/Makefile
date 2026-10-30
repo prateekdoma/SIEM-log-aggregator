@@ -18,5 +18,5 @@ test:            ## unit tests, no Docker
 pipeline:        ## injector scenarios -> alerts in Postgres (stack must be up)
 	bash tests/pipeline/run_pipeline.sh
 
-e2e:             ## real attacker scenarios A1-A3, C1-C2 (block 5)
-	@echo "e2e tests not implemented yet (block 5)"
+e2e:             ## real attacker scenarios A1-A3, C1-C2 (stack must be up)
+	bash tests/e2e/run_e2e.sh
