@@ -192,10 +192,11 @@ One detector service with rules as plugins: each rule is a class with the same t
 ```python
 class Rule(Protocol):
     id: str
-    technique: str
     severity: int
     def applies(self, ev: Event) -> bool: ...                       # cheap filter
     def evaluate(self, ev: Event, st: IpState) -> list[Alert]: ...  # 0..n alerts
+    # A rule may emit alerts for more than one technique (ssh-bruteforce emits
+    # T1110.001 and T1110.003); each Alert carries its own threat.technique.id.
 
 # detector/engine.py
 for msg in consumer:                      # group "detectors", topic normalized-security-events
@@ -207,16 +208,17 @@ for msg in consumer:                      # group "detectors", topic normalized-
                 producer.produce("security-alerts", key=ev.source.ip, value=alert.json())
 ```
 
-**IpState** (in memory, one per source IP): sliding windows of timestamps (`window(name, seconds)`), a set of usernames per window, per-rule cooldowns, and flags with timestamps (`mark(name, ts)`, `seen_within(name, seconds, now)`). All "now" values are the current event's `@timestamp`. Evict IPs idle for 30 min (by event time) so memory stays flat. State resets if a detector restarts; that is an accepted limitation.
+**IpState** (in memory, one per source IP): a sliding window of `(timestamp, user.name)` for SSH failures (queried per-username for T1110.001 and across users for T1110.003), per-`(rule, technique)` cooldowns, and flags with timestamps (`mark(name, ts)`, `seen_within(name, seconds, now)`). All "now" values are the current event's `@timestamp`. Evict IPs idle for 30 min (by event time) so memory stays flat. State resets if a detector restarts; that is an accepted limitation.
 
 | Rule | Technique | Fires when | Severity |
 | --- | --- | --- | --- |
-| `ssh-bruteforce` | T1110.001 Password Guessing | ≥ 10 SSH failures from one IP within 60 s | 50 |
+| `ssh-bruteforce` | T1110.001 Password Guessing | ≥ 10 SSH failures against the same `(source.ip, user.name)` within 60 s | 50 |
 | `ssh-bruteforce` | T1110.003 Password Spraying | Failures from one IP against ≥ 5 distinct `user.name` within 5 min | 50 |
 | `ssh-valid-after-bruteforce` | T1078 Valid Accounts | SSH success from an IP whose `bruteforce_seen` flag is set within the last 10 min | 80 |
 
 - The alert fires on the event that crosses the threshold, not when the window ends.
-- Cooldown: one alert per rule per IP per 5 min. A 50-guess hydra run produces one T1110 alert.
+- Cooldown: one alert per `(rule, technique, source.ip)` per 5 min, so T1110.001 and T1110.003 have independent cooldowns and an IP doing both raises one of each. A 50-guess hydra run against one user produces one T1110.001 alert.
+- T1110.001 counts failures per `(source.ip, user.name)`: ≥ 10 failures against the **same** username within 60 s. A spray of distinct usernames does not trip it; T1110.003 handles that.
 - BruteForce sets `bruteforce_seen` whenever it fires; ValidAccounts only reads that flag.
 - All thresholds come from env vars (`BF_FAIL_COUNT=10`, `BF_WINDOW_S=60`, `SPRAY_USERS=5`, `SPRAY_WINDOW_S=300`, `VALID_LOOKBACK_S=600`, `COOLDOWN_S=300`).
 
@@ -301,12 +303,15 @@ Three levels, fastest first. Nothing waits on a timer: rules fire when a thresho
 
 Unit cases that must pass before the detector ships:
 
-- [ ] 10 failures from one IP within 59 s → one T1110.001 alert; 9 failures → none
+- [ ] 10 failures against one user from one IP within 59 s → one T1110.001 alert; 9 failures → none
 - [ ] 10 failures spread over 5 min → none (C2 blind spot, tested on purpose)
-- [ ] 25 failures in a row → still one alert (cooldown)
+- [ ] 25 failures in a row (same user) → still one alert (cooldown)
 - [ ] Brute force, then success from the same IP within 10 min → T1078; same success from another IP → none
 - [ ] Success with no prior failures → none; one typo then success → none (C1)
 - [ ] One IP failing against 5 distinct usernames within 5 min → T1110.003
+- [ ] 12 failures against 12 different users from one IP → only T1110.003 (no T1110.001)
+- [ ] 10 failures against one user from one IP → only T1110.001 (no T1110.003)
+- [ ] One IP doing both (10+ against one user AND ≥5 distinct users) → one T1110.001 and one T1110.003
 - [ ] SSH parser: each of the three line types parses; an unrelated sshd line returns None
 - [ ] Nginx parser: a combined-format line maps to every web field in the schema
 

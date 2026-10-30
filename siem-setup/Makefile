@@ -15,8 +15,8 @@ reset:           ## wipe all data (Kafka, Postgres, log volumes)
 test:            ## unit tests, no Docker
 	python -m pytest
 
-pipeline:        ## injector scenarios -> alerts in Postgres (block 3)
-	@echo "pipeline tests not implemented yet (block 3)"
+pipeline:        ## injector scenarios -> alerts in Postgres (stack must be up)
+	bash tests/pipeline/run_pipeline.sh
 
 e2e:             ## real attacker scenarios A1-A3, C1-C2 (block 5)
 	@echo "e2e tests not implemented yet (block 5)"

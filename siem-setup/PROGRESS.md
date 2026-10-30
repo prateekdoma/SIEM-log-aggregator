@@ -1,8 +1,71 @@
 # PROGRESS
 
 ## Current block
-2. Pipeline core — DONE (done-check passed on Docker 2026-10-29). Next: block 3.
-   Block 1 DONE. Unit tests 9/9. spec-checker: 0 mismatches.
+4. OTX enrichment — DONE (done-check passed on Docker 2026-10-30). Blocks 1-3 DONE.
+   Next: block 5 (API). Unit tests 25/25.
+
+## Block 4 — OTX enrichment (done 2026-10-30)
+- normalizer/enrich.py: OtxTagger loads /data/intel/otx_ipv4.json, tags known_bad
+  (+20 severity, cap 100) / unknown, reloads on mtime change; missing/empty file
+  -> all unknown (pipeline never blocks). Wired into normalizer/main.py. 3 unit
+  tests (test_enrich.py).
+- intel/updater.py: OTXv2 SDK (1.5.12) getall_iter(modified_since=30d), IPv4 only,
+  cap OTX_MAX_IPS, atomic write to the cache; refresh every OTX_REFRESH_S (6h);
+  missing key/SDK error never crashes. EPHEMERAL: deletes the file on startup and
+  on SIGTERM/SIGINT; intel_cache is a named volume (not a host bind-mount), wiped
+  by make reset.
+- docker-compose: intel-updater service (OTX_API_KEY/OTX_MAX_IPS/… from .env),
+  intel_cache volume, normalizer mounts it :ro. common/config.py OTX_* added;
+  .env.example documents OTX_MAX_IPS/LOOKBACK/REFRESH (key stays in .env only).
+- Done-check PASSED: key authenticates (AUTH OK, real IPv4 returned); intel-updater
+  pulled 442 IPv4 (tested with OTX_MAX_IPS=500 for speed; prod default 100000);
+  injected event from an OTX IP -> intel_status=known_bad, severity 20->40 (fail)
+  / 0->20 (success); non-OTX IP -> unknown, severity unchanged. File confirmed
+  DELETED-ON-SHUTDOWN and re-pulled on restart.
+- NOTE: the running intel-updater container currently has OTX_MAX_IPS=500 baked in
+  from the test `up`. To use the full 100000 cap, set OTX_MAX_IPS in .env (or omit)
+  and recreate: `docker compose up -d --build intel-updater`.
+- spec-checker: 1 mismatch ("newest pulses first" not enforced) RESOLVED — verified
+  the OTX subscribed-pulses endpoint yields pulses newest-first (modified desc), so
+  early-stop at the cap keeps the newest; pull_ipv4 documents this and warns if the
+  order is ever violated. Ephemeral-file requirement: PASS. Everything else matched.
+
+## Block 3 — Detection (code complete 2026-10-29)
+- detector/state.py: IpState (deque of (ts,user) failures, per-(rule,technique)
+  cooldowns, flags) + StateStore (event-time eviction, EVICT_IDLE_S=1800).
+- detector/rules/: base.py (Rule Protocol + build_alert), ssh_bruteforce.py
+  (T1110.001 per (ip,user) >=10/60s; T1110.003 >=5 distinct users/300s; sets
+  bruteforce_seen), valid_after_bruteforce.py (T1078 on success if bruteforce_seen
+  within 600s), __init__.py RULES list.
+- detector/engine.py: consume normalized (group detectors), run RULES, produce
+  alerts keyed by source.ip, commit after flush, opportunistic evict.
+- injector/inject.py: scenario raw SSH lines -> syslog-raw, controlled @timestamps,
+  --ip/--user. detector + injector added to docker-compose (detector x2; injector
+  in `tools` profile, run on demand).
+- tests/unit/: test_bruteforce.py + test_valid_after.py (+factories.py); all SPEC
+  cases incl. the 3 revised ones. 22/22 unit tests pass.
+- tests/pipeline/run_pipeline.sh + Makefile `pipeline`: injects A1-A3/C1-C2 with a
+  fresh random /16 per run, polls Postgres alerts (15s each).
+
+## Block 3 done-check — PASSED on Docker 2026-10-29 (user-confirmed)
+- [x] `make test` passes (22/22: parsers + detection, incl. 3 revised cases)
+- [x] `make pipeline` passes (A1->T1110.001; A2->T1110.001+T1078; A3->T1110.003;
+      C1/C2 -> no alert)
+
+## Spec changes (agreed during build — MIRROR THESE INTO THE claude.ai DOC)
+- 2026-10-29 (block 3 design): T1110.001 Password Guessing redefined from
+  "≥10 SSH failures from one IP within 60 s" (IP-level) to "≥10 failures against
+  the same (source.ip, user.name) within 60 s" (per-user). T1110.003 spray stays
+  ≥5 distinct usernames/IP in 5 min. Cooldown is now per (rule, technique,
+  source.ip) so T1110.001 and T1110.003 alert independently. Rationale: cleanly
+  separates guessing from spraying; A1/A2 (same user `admin`) still fire
+  T1110.001, A3 (distinct users) fires T1110.003 only — documented expected
+  results unchanged. SPEC.md updated (Detection engine table + cooldown bullet +
+  Testing cases). User to copy this into the source-of-truth claude.ai doc.
+  Also tidied two illustrative samples in SPEC.md to match: Rule Protocol no
+  longer lists a single `technique: str` (a rule may emit multiple techniques);
+  IpState description now says a (timestamp, user.name) failure window + per-
+  (rule, technique) cooldowns instead of `window(name, seconds)`.
 
 ## Block 2 — Pipeline core (code complete 2026-10-29)
 - common/: schema.py (Event/Alert, Pydantic v2, nested dotted ECS JSON, UUIDv5

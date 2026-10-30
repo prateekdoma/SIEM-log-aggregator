@@ -16,7 +16,7 @@ from confluent_kafka import KafkaError
 
 from common import config
 from common.kafka import make_consumer, make_producer
-from normalizer import enrich
+from normalizer.enrich import OtxTagger
 from normalizer.parsers.nginx import parse_nginx_line
 from normalizer.parsers.ssh import parse_ssh_line
 
@@ -43,6 +43,7 @@ def main() -> None:
         [config.TOPIC_SYSLOG_RAW, config.TOPIC_WEB_LOGS_RAW],
     )
     producer = make_producer("normalizer")
+    tagger = OtxTagger()
     print("[normalizer] started", flush=True)
 
     try:
@@ -64,7 +65,7 @@ def main() -> None:
             raw = msg.value().decode("utf-8", errors="replace")
             event = parser(raw)
             if event is not None:
-                event = enrich.tag(event)
+                event = tagger.tag(event)
                 producer.produce(
                     config.TOPIC_NORMALIZED,
                     key=event.source.ip,

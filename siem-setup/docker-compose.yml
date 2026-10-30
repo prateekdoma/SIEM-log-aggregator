@@ -20,6 +20,9 @@ volumes:
   ssh_logs:   # target-ssh writes sshd logs here; producer-ssh tails them later
   web_logs:   # target-web (nginx) writes its access log here; producer-web tails it
   pgdata:     # postgres data (wiped by `make reset` = down -v)
+  intel_cache:  # OTX IPv4 cache; EPHEMERAL — intel-updater deletes the file on
+                # shutdown and re-pulls on startup; `make reset` wipes the volume.
+                # Not a host bind-mount, so the IP list never lands in a laptop folder.
 
 services:
   # --- SSH target -----------------------------------------------------------
@@ -257,6 +260,8 @@ services:
         condition: service_completed_successfully
     deploy:
       replicas: 2
+    volumes:
+      - intel_cache:/data/intel:ro   # read the OTX IPv4 cache (block 4 tagging)
     networks:
       - siem
     restart: unless-stopped
@@ -280,4 +285,60 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     networks:
       - siem
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Block 3 — Detection: plugin rules engine (2 replicas) + on-demand injector
+  # ==========================================================================
+
+  # --- Detector (2 replicas share the normalized partitions by source.ip) ---
+  detector:
+    build:
+      context: .
+      dockerfile: detector/Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      BF_FAIL_COUNT: ${BF_FAIL_COUNT}
+      BF_WINDOW_S: ${BF_WINDOW_S}
+      SPRAY_USERS: ${SPRAY_USERS}
+      SPRAY_WINDOW_S: ${SPRAY_WINDOW_S}
+      VALID_LOOKBACK_S: ${VALID_LOOKBACK_S}
+      COOLDOWN_S: ${COOLDOWN_S}
+    deploy:
+      replicas: 2
+    networks:
+      - siem
+    restart: unless-stopped
+
+  # --- Injector: on-demand scenario lines into syslog-raw (make pipeline) ---
+  # In the `tools` profile so a plain `docker compose up` never starts it.
+  # Run with: docker compose run --rm injector <scenario> [--ip IP]
+  injector:
+    build:
+      context: .
+      dockerfile: injector/Dockerfile
+    profiles: ["tools"]
+    networks:
+      - siem
+
+  # ==========================================================================
+  # Block 4 — OTX enrichment: bulk IPv4 intel pulled into the ephemeral cache
+  # ==========================================================================
+  intel-updater:
+    build:
+      context: .
+      dockerfile: intel/Dockerfile
+    environment:
+      OTX_API_KEY: ${OTX_API_KEY:-}
+      OTX_MAX_IPS: ${OTX_MAX_IPS:-100000}
+      OTX_LOOKBACK_DAYS: ${OTX_LOOKBACK_DAYS:-30}
+      OTX_REFRESH_S: ${OTX_REFRESH_S:-21600}
+    volumes:
+      - intel_cache:/data/intel          # rw: writes/clears the OTX cache file
+    networks:
+      - siem                             # needs internet (not the internal lab net)
     restart: unless-stopped
