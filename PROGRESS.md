@@ -11,8 +11,7 @@
   the real `kafka-consumer-groups --describe --group detectors` output showing 2
   detectors sharing the 3 partitions (172.19.0.9 owns 0&1, 172.19.0.10 owns 2),
   C2 blind-spot explanation, retention, repo layout, out-of-scope.
-- Screenshot: left as a placeholder (docs/dashboard.png) for the user to capture
-  from the live dashboard — can't screenshot from here.
+- Screenshot: docs/dashboard.png, captured from the live dashboard.
 
 ## Block 5 — API (code complete 2026-10-30)
 - api/main.py: FastAPI on 8000. GET /alerts (?since=&limit=50), GET /events
@@ -49,9 +48,6 @@
   injected event from an OTX IP -> intel_status=known_bad, severity 20->40 (fail)
   / 0->20 (success); non-OTX IP -> unknown, severity unchanged. File confirmed
   DELETED-ON-SHUTDOWN and re-pulled on restart.
-- NOTE: the running intel-updater container currently has OTX_MAX_IPS=500 baked in
-  from the test `up`. To use the full 100000 cap, set OTX_MAX_IPS in .env (or omit)
-  and recreate: `docker compose up -d --build intel-updater`.
 - spec-checker: 1 mismatch ("newest pulses first" not enforced) RESOLVED — verified
   the OTX subscribed-pulses endpoint yields pulses newest-first (modified desc), so
   early-stop at the cap keeps the newest; pull_ipv4 documents this and warns if the

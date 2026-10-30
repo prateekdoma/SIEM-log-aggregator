@@ -1,7 +1,7 @@
 # SIEM Log Aggregator — docker-compose
 #
 # Pin the Compose project name so image and default container names are `siem-*`
-# (otherwise they take the folder name, siem-setup).
+# (otherwise they take the folder name).
 name: siem
 #
 # Block 1 (Lab + scripts) defines only the attack-lab services below.
